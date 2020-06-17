@@ -4,6 +4,7 @@ import AppError from '@shared/errors/AppError';
 
 import IProductsRepository from '@modules/products/repositories/IProductsRepository';
 import ICustomersRepository from '@modules/customers/repositories/ICustomersRepository';
+import productsRouter from '@modules/products/infra/http/routes/products.routes';
 import Order from '../infra/typeorm/entities/Order';
 import IOrdersRepository from '../repositories/IOrdersRepository';
 
@@ -20,13 +21,55 @@ interface IRequest {
 @injectable()
 class CreateOrderService {
   constructor(
+    @inject('OrdersRepository')
     private ordersRepository: IOrdersRepository,
+    @inject('ProductsRepository')
     private productsRepository: IProductsRepository,
+    @inject('CustomersRepository')
     private customersRepository: ICustomersRepository,
   ) {}
 
   public async execute({ customer_id, products }: IRequest): Promise<Order> {
-    // TODO
+    const customer = await this.customersRepository.findById(customer_id);
+
+    if (!customer) throw new AppError('Customer does not exist');
+
+    const productsWithPrice = await this.productsRepository.findAllById(
+      products,
+    );
+
+    if (productsWithPrice.length !== products.length)
+      throw new AppError('All products must be valid');
+
+    let index = -1;
+    const productsParsed = productsWithPrice.map(p => {
+      index += 1;
+      return {
+        product_id: p.id,
+        quantity: products[index].quantity,
+        price: p.price,
+      };
+    });
+
+    const productsUpdatedStock = await this.productsRepository.updateQuantity(
+      products,
+    );
+
+    productsUpdatedStock.map(p => {
+      if (p.quantity < 0) {
+        throw new AppError(
+          'Requested order product quantity exceeds available stock',
+        );
+      }
+      return p;
+    });
+
+    const order = await this.ordersRepository.create({
+      customer,
+      products: productsParsed,
+    });
+
+    return order;
   }
 }
 
